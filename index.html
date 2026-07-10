@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17100d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>BOXING ROUND TIMER</title>
+<style>
+:root{--bg:#120d0b;--panel:#211713;--line:#4b3328;--text:#f7eadf;--muted:#b89b8a;--red:#b8372b;--green:#2e6e4f;--gold:#d6a94a}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:radial-gradient(circle at 50% 0,#2a1a14 0,#120d0b 65%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif}
+body{display:flex;align-items:center;justify-content:center;padding:18px}.app{width:100%;max-width:460px;background:linear-gradient(180deg,#281a15,#17100d);border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 28px 80px rgba(0,0,0,.55)}
+.brand{text-align:center;font-weight:900;letter-spacing:3px;color:#d9b36c;font-size:13px;margin-bottom:14px}.phase{padding:13px;border-radius:12px;text-align:center;font-weight:900;letter-spacing:4px;background:#3b2921}.phase.work{background:linear-gradient(180deg,#c54134,#8f251d)}.phase.rest{background:linear-gradient(180deg,#3a8a64,#25523d)}.phase.done{background:linear-gradient(180deg,#e5bd63,#b78929);color:#2a1b0a}
+.clock{text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:88px;font-weight:900;line-height:1;margin:26px 0 10px;font-variant-numeric:tabular-nums}.round{text-align:center;color:var(--muted);font-weight:800;letter-spacing:2px;margin-bottom:18px}
+.dots{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:20px}.dot{width:24px;height:8px;border-radius:99px;background:#3a2a23;border:1px solid #52372c}.dot.done{background:var(--red);border-color:var(--red)}.dot.current{background:var(--gold);border-color:var(--gold)}
+.settings{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.field{background:#1a120f;border:1px solid #3d2c25;border-radius:12px;padding:10px;text-align:center}.field label{display:block;font-size:10px;color:var(--muted);letter-spacing:1px;margin-bottom:8px}.step{display:flex;align-items:center;justify-content:space-between;gap:5px}.step button{width:32px;height:32px;padding:0;border-radius:8px}.val{font-family:ui-monospace,monospace;font-size:17px;font-weight:900}
+.buttons{display:flex;gap:10px;margin-top:12px}button{flex:1;border:1px solid var(--line);border-radius:12px;padding:15px 10px;background:#241813;color:var(--text);font-size:15px;font-weight:900;cursor:pointer}#start{background:linear-gradient(180deg,#c54134,#8f251d);border-color:transparent}#start.running{background:#33261f;color:#f2c56b;border-color:#f2c56b}.note{text-align:center;color:var(--muted);font-size:12px;line-height:1.5;margin-top:14px;min-height:18px}.small{font-size:11px;color:#8f7567;text-align:center;margin-top:8px}@media(max-width:390px){.clock{font-size:72px}.settings{gap:6px}.field{padding:8px 6px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="brand">BOXING ROUND TIMER</div>
+  <div class="phase" id="phase">READY</div>
+  <div class="clock" id="clock">3:00</div>
+  <div class="round" id="round">ROUND 1 / 5</div>
+  <div class="dots" id="dots"></div>
+  <div class="settings">
+    <div class="field"><label>練習時間</label><div class="step"><button data-k="work" data-d="-30">−</button><span class="val" id="workVal">3:00</span><button data-k="work" data-d="30">＋</button></div></div>
+    <div class="field"><label>休憩時間</label><div class="step"><button data-k="rest" data-d="-15">−</button><span class="val" id="restVal">1:00</span><button data-k="rest" data-d="15">＋</button></div></div>
+    <div class="field"><label>ラウンド数</label><div class="step"><button data-k="rounds" data-d="-1">−</button><span class="val" id="roundsVal">5</span><button data-k="rounds" data-d="1">＋</button></div></div>
+  </div>
+  <div class="buttons"><button id="start">開始</button><button id="reset">リセット</button></div>
+  <div class="buttons"><button id="gongTest">🔔 ゴング</button><button id="bellTest">🛎 ベル</button></div>
+  <div class="note" id="note">時間とラウンド数を設定して開始してください。</div>
+  <div class="small">iPhoneでは画面を開いたまま使うと最も安定します。</div>
+</div>
+<script>
+(function(){
+let WORK=180,REST=60,ROUNDS=5,phase="idle",roundIndex=0,remaining=WORK,running=false,lastTs=0,rafId=null,audioCtx=null,wakeLock=null;
+const $=id=>document.getElementById(id),clock=$("clock"),phaseEl=$("phase"),roundEl=$("round"),dotsEl=$("dots"),workVal=$("workVal"),restVal=$("restVal"),roundsVal=$("roundsVal"),startBtn=$("start"),resetBtn=$("reset"),note=$("note");
+function fmt(s){s=Math.max(0,Math.ceil(s));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+function ensureAudio(){if(!audioCtx){const AC=window.AudioContext||window.webkitAudioContext;if(AC)audioCtx=new AC()}if(audioCtx&&audioCtx.state==="suspended")audioCtx.resume()}
+function tone(freq,duration,delay=0,type="sine",volume=.45){ensureAudio();if(!audioCtx)return;const t=audioCtx.currentTime+delay,o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(volume,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+duration);o.connect(g).connect(audioCtx.destination);o.start(t);o.stop(t+duration+.03)}
+function gong(){tone(220,.85,0,"sine",.55);tone(165,1.05,.05,"triangle",.35);tone(110,1.2,.08,"sine",.25);if(navigator.vibrate)navigator.vibrate([180,80,180])}
+function bell(){tone(660,.22,0,"sine",.4);tone(880,.22,.26,"sine",.4);if(navigator.vibrate)navigator.vibrate([100,70,100])}
+async function requestWakeLock(){try{if("wakeLock" in navigator)wakeLock=await navigator.wakeLock.request("screen")}catch(e){}}
+function releaseWakeLock(){if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null}}
+function renderDots(){dotsEl.innerHTML="";for(let i=0;i<ROUNDS;i++){const d=document.createElement("span");d.className="dot";if(i<roundIndex)d.classList.add("done");if(i===roundIndex&&phase!=="idle"&&phase!=="done")d.classList.add("current");dotsEl.appendChild(d)}}
+function render(){clock.textContent=fmt(remaining);workVal.textContent=fmt(WORK);restVal.textContent=fmt(REST);roundsVal.textContent=ROUNDS;roundEl.textContent="ROUND "+Math.min(roundIndex+1,ROUNDS)+" / "+ROUNDS;phaseEl.className="phase "+phase;phaseEl.textContent=phase==="work"?"FIGHT":phase==="rest"?"REST":phase==="done"?"FINISH":"READY";renderDots()}
+function beginRound(i){roundIndex=i;phase="work";remaining=WORK;gong();render()}
+function beginRest(){phase="rest";remaining=REST;bell();render()}
+function finishAll(){running=false;phase="done";remaining=0;gong();startBtn.textContent="開始";startBtn.classList.remove("running");note.textContent="全 "+ROUNDS+" ラウンド終了。";releaseWakeLock();if(rafId)cancelAnimationFrame(rafId);render()}
+function advance(){if(phase==="work"){if(roundIndex+1>=ROUNDS)finishAll();else beginRest()}else if(phase==="rest")beginRound(roundIndex+1)}
+function loop(ts){if(!running)return;if(!lastTs)lastTs=ts;remaining-=(ts-lastTs)/1000;lastTs=ts;if(remaining<=0)advance();render();if(running)rafId=requestAnimationFrame(loop)}
+async function start(){ensureAudio();await requestWakeLock();if(phase==="idle"||phase==="done")beginRound(0);running=true;lastTs=0;startBtn.textContent="一時停止";startBtn.classList.add("running");note.textContent="稼働中";rafId=requestAnimationFrame(loop)}
+function pause(){running=false;if(rafId)cancelAnimationFrame(rafId);startBtn.textContent="再開";startBtn.classList.remove("running");note.textContent="一時停止";releaseWakeLock()}
+function reset(){running=false;if(rafId)cancelAnimationFrame(rafId);phase="idle";roundIndex=0;remaining=WORK;lastTs=0;startBtn.textContent="開始";startBtn.classList.remove("running");note.textContent="時間とラウンド数を設定して開始してください。";releaseWakeLock();render()}
+startBtn.addEventListener("click",()=>running?pause():start());resetBtn.addEventListener("click",reset);$("gongTest").addEventListener("click",gong);$("bellTest").addEventListener("click",bell);
+document.querySelectorAll("[data-k]").forEach(btn=>btn.addEventListener("click",()=>{if(running)return;const k=btn.dataset.k,d=Number(btn.dataset.d);if(k==="work"){WORK=Math.max(30,Math.min(1800,WORK+d));if(phase==="idle")remaining=WORK}else if(k==="rest"){REST=Math.max(15,Math.min(600,REST+d))}else{ROUNDS=Math.max(1,Math.min(20,ROUNDS+d));roundIndex=Math.min(roundIndex,ROUNDS-1)}render()}));
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&running)requestWakeLock()});render();if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js"));
+})();
+</script>
+</body>
+</html>
